@@ -1,0 +1,9 @@
+{
+  "name": "b2-quest-log",
+  "private": true,
+  "version": "1.0.0",
+  "description": "German B2 consolidation tracker with cross-device sync",
+  "dependencies": {
+    "@netlify/blobs": "^8.1.0"
+  }
+}
