@@ -4,12 +4,21 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>B2 QUEST LOG — German Consolidation Tracker</title>
+<link rel="manifest" href="/manifest.json">
+<link rel="icon" href="/icon-192.png">
+<link rel="apple-touch-icon" href="/icon-192.png">
+<meta name="theme-color" content="#0d0221">
 <script>
 (function(){
   try{
     var t = localStorage.getItem('b2questTheme_v1');
     if(t) document.documentElement.setAttribute('data-theme', t);
   }catch(e){}
+  if('serviceWorker' in navigator){
+    window.addEventListener('load', ()=>{
+      navigator.serviceWorker.register('/sw.js').catch(()=>{});
+    });
+  }
 })();
 </script>
 <style>
