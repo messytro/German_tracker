@@ -5,47 +5,60 @@ trainer with spaced repetition + exam mode, an AI-checked writing log,
 a speaking log, a listening log, a grammar drill section, and a dashboard —
 all in one static site, with optional cross-device sync.
 
-## Deploying to Netlify (recommended: via GitHub)
+**This version syncs via Supabase and runs on GitHub Pages (free forever,
+no serverless functions, no credits).** It reuses the same Supabase
+project as your day planner — you just need one extra table in it.
 
-1. Create a new GitHub repository and push this entire folder to it
-   (keep the folder structure exactly as-is — `index.html`, `netlify.toml`,
-   `package.json`, and `netlify/functions/sync.js` all need to stay where they are).
-2. Go to [app.netlify.com](https://app.netlify.com) → **Add new site** →
-   **Import an existing project** → connect GitHub → pick the repo.
-3. Netlify will auto-detect `netlify.toml`. Leave the build settings as
-   detected and click **Deploy**. It will run `npm install` for you and
-   bundle the sync function automatically.
-4. Once deployed, you'll get a URL like `https://your-site.netlify.app`.
-   Open it on any device.
+## Deploying to GitHub Pages
 
-### Alternative: Netlify CLI (no GitHub needed)
+1. Push this whole folder to a GitHub repo — `index.html`, `config.js`,
+   `manifest.json`, `sw.js`, `icon-192.png`, `icon-512.png` all sitting
+   directly at the repo root (not nested in a subfolder).
+2. Repo Settings → Pages → Source: "Deploy from a branch" → `main` / `/ (root)` → Save.
+3. Also add an empty file named `.nojekyll` at the root (Add file → Create
+   new file) so GitHub serves the files as-is.
+4. You'll get a URL like `https://yourusername.github.io/your-repo/`.
 
-```bash
-npm install
-npm install -g netlify-cli
-netlify deploy --prod
-```
+The old `netlify.toml`, `package.json`, and `netlify/functions/sync.js`
+are no longer used — safe to delete them from the repo, or just leave
+them, GitHub Pages ignores anything it doesn't recognize.
 
-Follow the prompts (log in / create a site). The CLI bundles the function
-correctly, unlike a plain drag-and-drop of the folder into the Netlify
-dashboard — drag-and-drop only works for the static `index.html` and won't
-set up the serverless function, so cross-device sync won't work that way.
+## Setting up sync (reuses your day planner's Supabase project)
 
-## Using cross-device sync
+1. Open `config.js` and paste in the **exact same** `SUPABASE_URL` and
+   `SUPABASE_ANON_KEY` you already used for the day planner's `config.js`.
+2. In that Supabase project's **SQL Editor**, run this once:
 
-Once deployed with the function live, open **Home → Cross-Device Sync**
-in the app. Enter any sync code (4+ characters, something only you'd
-guess) on one device, hit Connect. Enter the *same* code on your other
-devices. Each device automatically pushes changes to the cloud a couple
-seconds after you make them, and pulls the newer version on load if the
-cloud copy is more recent than what's stored locally.
+   ```sql
+   create table b2quest_sync (
+     code text primary key,
+     data jsonb not null,
+     updated_at timestamptz not null default now()
+   );
 
-This is last-write-wins, not real-time collaborative sync — fine for one
-person using several devices, not designed for two people editing
-simultaneously.
+   alter table b2quest_sync enable row level security;
 
-**No accounts, no passwords.** Anyone who knows your exact sync code could
-read or overwrite your data via the API, so don't use something guessable.
+   -- No accounts here, by design — same trust model as before:
+   -- anyone who knows your exact sync code can read/write this table.
+   -- Keep the code unguessable, same as always.
+   create policy "open_by_code" on b2quest_sync for all
+     using (true) with check (true);
+   ```
+
+3. Push these files to GitHub (Pages auto-redeploys), open the app, go to
+   **Home → Cross-Device Sync**, enter any sync code (4+ characters,
+   something only you'd guess), hit Connect. Enter the *same* code on
+   your other devices.
+
+Everything else about how sync behaves is unchanged: each device pushes
+changes to the cloud a couple seconds after you make them, and pulls the
+newer version on load if the cloud copy is more recent than what's
+stored locally. Last-write-wins, not real-time collaborative — fine for
+one person on several devices.
+
+**No accounts, no passwords.** Anyone who knows your exact sync code
+could read or overwrite your data via this table, so don't use something
+guessable.
 
 ## Local-only use (no sync)
 

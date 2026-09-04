@@ -4,9 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>B2 QUEST LOG — German Consolidation Tracker</title>
-<link rel="manifest" href="/manifest.json">
-<link rel="icon" href="/icon-192.png">
-<link rel="apple-touch-icon" href="/icon-192.png">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
 <meta name="theme-color" content="#0d0221">
 <script>
 (function(){
@@ -16,7 +16,7 @@
   }catch(e){}
   if('serviceWorker' in navigator){
     window.addEventListener('load', ()=>{
-      navigator.serviceWorker.register('/sw.js').catch(()=>{});
+      navigator.serviceWorker.register('./sw.js').catch(()=>{});
     });
   }
 })();
@@ -1220,7 +1220,7 @@ h1.pixel-font{ font-size:18px; color:var(--ink); text-shadow:2px 2px 0 rgba(0,0,
 
     <div class="panel sync-panel">
       <div class="panel-tag">◆ CROSS-DEVICE SYNC ◆</div>
-      <div class="subtitle" style="margin-bottom:12px;">Enter the same sync code on every device to keep progress in sync. Only works once this is deployed on Netlify with the sync function enabled.</div>
+      <div class="subtitle" style="margin-bottom:12px;">Enter the same sync code on every device to keep progress in sync. Requires a one-time free Supabase setup — see README.md.</div>
       <div id="syncArea"></div>
     </div>
 
@@ -1569,6 +1569,7 @@ h1.pixel-font{ font-size:18px; color:var(--ink); text-shadow:2px 2px 0 rgba(0,0,
 
 </div>
 
+<script src="config.js"></script>
 <script>
 (async function(){
 
@@ -3325,12 +3326,25 @@ async function restoreFromBackupObject(backup){
   }
 }
 
-/* ============ CLOUD SYNC (Netlify Functions + Blobs) ============ */
+/* ============ CLOUD SYNC (Supabase, no accounts — just a shared code) ============ */
 const SYNC_CODE_KEY = 'b2questSyncCode_v1';
 const SYNC_LOCAL_UPDATED_KEY = 'b2questLocalUpdatedAt_v1';
 let syncCode = '';
 try{ syncCode = localStorage.getItem(SYNC_CODE_KEY) || ''; }catch(e){}
 let syncPushTimer = null;
+let sbClient = null;
+
+async function getSupabase(){
+  if (sbClient) return sbClient;
+  const url = (typeof window !== 'undefined' && window.SUPABASE_URL) || '';
+  const key = (typeof window !== 'undefined' && window.SUPABASE_ANON_KEY) || '';
+  if (!url || url.includes('YOUR-PROJECT') || !url.startsWith('http')) return null;
+  try{
+    const mod = await import('https://esm.sh/@supabase/supabase-js@2');
+    sbClient = mod.createClient(url, key);
+    return sbClient;
+  }catch(e){ console.warn('Supabase failed to load (sync unavailable offline-only mode)', e); return null; }
+}
 
 function markLocalDirtyAndSync(){
   try{ localStorage.setItem(SYNC_LOCAL_UPDATED_KEY, new Date().toISOString()); }catch(e){}
@@ -3346,23 +3360,22 @@ function setSyncStatus(text, cls){
 
 async function cloudPull(){
   if(!syncCode) return null;
+  const sb = await getSupabase();
+  if(!sb) return null;
   try{
-    const res = await fetch('/api/sync?code=' + encodeURIComponent(syncCode));
-    if(!res.ok) return null;
-    const json = await res.json();
-    return json.data || null;
+    const { data, error } = await sb.from('b2quest_sync').select('data').eq('code', syncCode).maybeSingle();
+    if (error || !data) return null;
+    return data.data || null;
   }catch(e){ return null; }
 }
 async function cloudPush(){
   if(!syncCode) return false;
+  const sb = await getSupabase();
+  if(!sb) return false;
   try{
     const backup = collectBackupObject();
-    const res = await fetch('/api/sync?code=' + encodeURIComponent(syncCode), {
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify(backup)
-    });
-    return res.ok;
+    const { error } = await sb.from('b2quest_sync').upsert({ code: syncCode, data: backup, updated_at: new Date().toISOString() });
+    return !error;
   }catch(e){ return false; }
 }
 
@@ -3372,7 +3385,7 @@ function scheduleSyncPush(){
   syncPushTimer = setTimeout(async ()=>{
     setSyncStatus('⏳ Syncing...', 'syncing');
     const ok = await cloudPush();
-    setSyncStatus(ok ? '✓ Synced' : '⚠ Sync failed (offline?)', ok ? 'ok' : 'err');
+    setSyncStatus(ok ? '✓ Synced' : '⚠ Sync failed (offline, or sync not set up — see README)', ok ? 'ok' : 'err');
   }, 1500);
 }
 
@@ -3392,7 +3405,7 @@ async function resolveInitialSync(){
   if(!cloud){
     // nothing in the cloud yet under this code — push current local state
     const ok = await cloudPush();
-    setSyncStatus(ok ? '✓ Synced (first push)' : '⚠ Sync failed (offline?)', ok ? 'ok' : 'err');
+    setSyncStatus(ok ? '✓ Synced (first push)' : '⚠ Sync failed (offline, or sync not set up — see README)', ok ? 'ok' : 'err');
     return;
   }
   let localUpdated = '';
@@ -3406,7 +3419,7 @@ async function resolveInitialSync(){
     setSyncStatus('✓ Synced (pulled newer cloud data)', 'ok');
   } else {
     const ok = await cloudPush();
-    setSyncStatus(ok ? '✓ Synced' : '⚠ Sync failed (offline?)', ok ? 'ok' : 'err');
+    setSyncStatus(ok ? '✓ Synced' : '⚠ Sync failed (offline, or sync not set up — see README)', ok ? 'ok' : 'err');
   }
 }
 
