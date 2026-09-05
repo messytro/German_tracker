@@ -6,5 +6,5 @@
 // classic <script> tag can read these as window globals without needing to
 // restructure the whole file into an ES module.
 
-window.SUPABASE_URL = "https://wlckntkuqeyrowwjjzgj.supabase.co";
-window.SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndsY2tudGt1cWV5cm93d2pqemdqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODgyODI3MDcsImV4cCI6MjEwMzg1ODcwN30.zQ4C8QBwLv7aLTNkF2a7gUSS1ZbcfwFrgk5q4-eiVTY";
+window.SUPABASE_URL = "https://YOUR-PROJECT.supabase.co";
+window.SUPABASE_ANON_KEY = "YOUR-ANON-PUBLIC-KEY";

@@ -1224,6 +1224,12 @@ h1.pixel-font{ font-size:18px; color:var(--ink); text-shadow:2px 2px 0 rgba(0,0,
       <div id="syncArea"></div>
     </div>
 
+    <div class="panel sync-panel">
+      <div class="panel-tag">◆ TASK MANAGER SYNC ◆</div>
+      <div class="subtitle" style="margin-bottom:12px;">Live, two-way sync of your daily tasks with your day planner app. Sign in with the same account you use there. Requires the source_key column + realtime setup — see README.md.</div>
+      <div id="bridgeArea"></div>
+    </div>
+
     <div class="backup-row">
       <button class="backup-link" id="exportBackupBtn">💾 Export Backup</button>
       <button class="backup-link" id="importBackupBtn">📤 Import Backup</button>
@@ -1985,6 +1991,7 @@ function renderTasklist(weekNum){
         card.className = 'day-card' + (allTasksDone ? ' day-complete':'');
         renderWeekTabs();
         updateHome();
+        pushDayToBridge(week.week, day.day);
       }
       box.onclick = toggle;
       txt.onclick = toggle;
@@ -3429,6 +3436,195 @@ function disconnectSync(){
   try{ localStorage.removeItem(SYNC_CODE_KEY); }catch(e){}
   renderSyncUI();
 }
+
+/* ============ TASK MANAGER BRIDGE (live, two-way, via Supabase Auth) ============ */
+const BRIDGE_ENABLED_KEY = 'b2questBridgeEnabled_v1';
+let bridgeEnabled = (await storageGet(BRIDGE_ENABLED_KEY)) === '1';
+let bridgeSession = null;
+let bridgeChannel = null;
+let bridgeCategoryId = null;
+let bridgeMessage = '';
+
+function addDaysISO(base, n){
+  const d = new Date(base);
+  d.setDate(d.getDate() + n);
+  return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+}
+
+async function bridgeSignIn(email, pw){
+  const sb = await getSupabase();
+  if(!sb){ bridgeMessage = "Sync isn't configured — see README.md."; renderBridgeUI(); return; }
+  bridgeMessage = 'Signing in…'; renderBridgeUI();
+  const { error } = await sb.auth.signInWithPassword({ email, password: pw });
+  bridgeMessage = error ? error.message : '';
+  if(!error){ const { data } = await sb.auth.getSession(); bridgeSession = data.session; }
+  renderBridgeUI();
+}
+async function bridgeSignUp(email, pw){
+  const sb = await getSupabase();
+  if(!sb){ bridgeMessage = "Sync isn't configured — see README.md."; renderBridgeUI(); return; }
+  bridgeMessage = 'Creating account…'; renderBridgeUI();
+  const { error } = await sb.auth.signUp({ email, password: pw });
+  bridgeMessage = error ? error.message : 'Check your email to confirm, then sign in.';
+  renderBridgeUI();
+}
+async function bridgeSignOut(){
+  const sb = await getSupabase();
+  if(sb && bridgeChannel){ try{ sb.removeChannel(bridgeChannel); }catch(e){} bridgeChannel = null; }
+  if(sb) await sb.auth.signOut();
+  bridgeSession = null;
+  bridgeEnabled = false;
+  await storageSet(BRIDGE_ENABLED_KEY, '0');
+  renderBridgeUI();
+}
+
+async function ensureBridgeCategory(sb, uid){
+  if(bridgeCategoryId) return bridgeCategoryId;
+  const { data } = await sb.from('categories').select('id').eq('user_id', uid).ilike('label', 'german').maybeSingle();
+  if(data){ bridgeCategoryId = data.id; return bridgeCategoryId; }
+  const id = crypto.randomUUID();
+  await sb.from('categories').insert({ id, user_id: uid, label: 'German', color: '#6B4A8A', updated_at: new Date().toISOString() });
+  bridgeCategoryId = id;
+  return id;
+}
+
+async function pushDayToBridge(weekNum, dayNum){
+  if(!bridgeEnabled || !bridgeSession) return;
+  const sb = await getSupabase();
+  if(!sb) return;
+  const uid = bridgeSession.user.id;
+  const week = WEEKS.find(w=>w.week===weekNum);
+  const day = week.days.find(d=>d.day===dayNum);
+  const key = weekNum + '-' + dayNum;
+  const checklist = day.tasks.map((text,i)=>({ id:'t'+i, text, done: !!taskState[key+'-'+i] }));
+  const done = checklist.every(c=>c.done);
+  const dayIndex = (weekNum-1)*7 + (dayNum-1);
+  const date = addDaysISO(PROGRAM_START_DATE, dayIndex);
+  try{
+    const catId = await ensureBridgeCategory(sb, uid);
+    const row = {
+      user_id: uid, title: 'W'+weekNum+' T'+dayNum+': '+day.focus, category_id: catId,
+      priority: null, date, start_minutes: null, duration: null, done,
+      checklist, updated_at: new Date().toISOString(), source_key: key,
+    };
+    const { data: existing } = await sb.from('tasks').select('id').eq('user_id', uid).eq('source_key', key).maybeSingle();
+    if(existing){ await sb.from('tasks').update(row).eq('id', existing.id); }
+    else { row.id = crypto.randomUUID(); await sb.from('tasks').insert(row); }
+  }catch(e){ console.warn('bridge push failed', e); }
+}
+
+let bridgePushAllRunning = false;
+async function pushAllDaysToBridge(){
+  if(bridgePushAllRunning) return;
+  bridgePushAllRunning = true;
+  bridgeMessage = '⏳ Pushing 56 days to your task manager…'; renderBridgeUI();
+  for(const week of WEEKS){
+    for(const day of week.days){
+      await pushDayToBridge(week.week, day.day);
+    }
+  }
+  bridgePushAllRunning = false;
+  bridgeMessage = '✓ All 56 days pushed. Live sync is on.';
+  renderBridgeUI();
+}
+
+function applyBridgeRowToLocal(row){
+  if(!row || !row.source_key) return;
+  const key = row.source_key;
+  (row.checklist||[]).forEach((c,i)=>{ taskState[key+'-'+i] = !!c.done; });
+  completedDays[key] = !!row.done;
+  storageSet('b2questTasks_v1', JSON.stringify(taskState));
+  storageSet('b2questProgress_v1', JSON.stringify(completedDays));
+  const wk = Number(key.split('-')[0]);
+  if(typeof activeWeek !== 'undefined' && activeWeek === wk && typeof renderTasklist === 'function'){
+    renderTasklist(activeWeek);
+  }
+  if(typeof updateHome === 'function') updateHome();
+}
+
+async function subscribeBridgeRealtime(){
+  if(!bridgeEnabled || !bridgeSession) return;
+  const sb = await getSupabase();
+  if(!sb) return;
+  const uid = bridgeSession.user.id;
+  if(bridgeChannel){ try{ sb.removeChannel(bridgeChannel); }catch(e){} }
+  bridgeChannel = sb.channel('b2q-bridge-' + uid)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'tasks', filter: 'user_id=eq.' + uid }, (payload)=>{
+      if(payload.eventType === 'DELETE') return;
+      applyBridgeRowToLocal(payload.new);
+    })
+    .subscribe();
+}
+
+async function enableBridge(){
+  bridgeEnabled = true;
+  await storageSet(BRIDGE_ENABLED_KEY, '1');
+  await subscribeBridgeRealtime();
+  renderBridgeUI();
+  await pushAllDaysToBridge();
+}
+async function disableBridge(){
+  bridgeEnabled = false;
+  await storageSet(BRIDGE_ENABLED_KEY, '0');
+  if(bridgeChannel){ const sb = await getSupabase(); if(sb) sb.removeChannel(bridgeChannel); bridgeChannel = null; }
+  renderBridgeUI();
+}
+
+function renderBridgeUI(){
+  const wrap = document.getElementById('bridgeArea');
+  if(!wrap) return;
+
+  if(!bridgeSession){
+    wrap.innerHTML =
+      '<div class="sync-row" style="flex-direction:column;align-items:stretch;gap:8px;">'
+      + '<input type="email" id="bridgeEmail" class="search-input" placeholder="Email (same account as your day planner)">'
+      + '<input type="password" id="bridgePw" class="search-input" placeholder="Password">'
+      + '<div style="display:flex;gap:8px;">'
+      + '<button class="mini-btn" id="bridgeSignInBtn" style="flex:1;">SIGN IN</button>'
+      + '<button class="mini-btn" id="bridgeSignUpBtn" style="flex:1;">SIGN UP</button>'
+      + '</div></div>'
+      + '<div class="sync-status-text">' + (bridgeMessage || 'Not signed in — daily tasks stay local only') + '</div>';
+    document.getElementById('bridgeSignInBtn').onclick = ()=> bridgeSignIn(document.getElementById('bridgeEmail').value.trim(), document.getElementById('bridgePw').value);
+    document.getElementById('bridgeSignUpBtn').onclick = ()=> bridgeSignUp(document.getElementById('bridgeEmail').value.trim(), document.getElementById('bridgePw').value);
+    return;
+  }
+
+  if(!bridgeEnabled){
+    wrap.innerHTML =
+      '<div class="sync-row">'
+      + '<div class="sync-code-display">Signed in as <b>' + bridgeSession.user.email + '</b></div>'
+      + '<button class="mini-btn" id="bridgeEnableBtn">ENABLE LIVE SYNC</button>'
+      + '<button class="mini-btn" id="bridgeSignOutBtn">SIGN OUT</button>'
+      + '</div>'
+      + '<div class="sync-status-text">' + (bridgeMessage || 'Not enabled yet — tasks stay local only') + '</div>';
+    document.getElementById('bridgeEnableBtn').onclick = enableBridge;
+    document.getElementById('bridgeSignOutBtn').onclick = bridgeSignOut;
+    return;
+  }
+
+  wrap.innerHTML =
+    '<div class="sync-row">'
+    + '<div class="sync-code-display">🔄 Live sync ON as <b>' + bridgeSession.user.email + '</b></div>'
+    + '<button class="mini-btn" id="bridgePushAllBtn">RE-PUSH ALL 56</button>'
+    + '<button class="mini-btn" id="bridgeDisableBtn">TURN OFF</button>'
+    + '</div>'
+    + '<div class="sync-status-text">' + (bridgeMessage || '✓ Checking a task off here updates your day planner automatically, and vice versa.') + '</div>';
+  document.getElementById('bridgePushAllBtn').onclick = pushAllDaysToBridge;
+  document.getElementById('bridgeDisableBtn').onclick = disableBridge;
+}
+
+(async function initBridgeAuth(){
+  const sb = await getSupabase();
+  if(!sb) { renderBridgeUI(); return; }
+  const { data } = await sb.auth.getSession();
+  bridgeSession = data && data.session ? data.session : null;
+  if(bridgeSession && bridgeEnabled) await subscribeBridgeRealtime();
+  renderBridgeUI();
+  sb.auth.onAuthStateChange((_event, session)=>{
+    bridgeSession = session;
+    renderBridgeUI();
+  });
+})();
 
 function renderSyncUI(){
   const wrap = document.getElementById('syncArea');

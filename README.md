@@ -60,6 +60,55 @@ one person on several devices.
 could read or overwrite your data via this table, so don't use something
 guessable.
 
+## Task Manager Bridge (live, two-way sync with your day planner)
+
+There's a second, separate panel — **Home → Task Manager Sync** — that
+does something different from the code-based sync above: it mirrors
+your 56 daily task-days (the 3 checklist items per day, from the 8-week
+schedule) directly into your **day planner's** task list, live, in both
+directions. Check something off here, it updates there within a second
+or two — and vice versa.
+
+This one uses real sign-in (not a shared code), because it needs to
+write into the exact same `tasks` table your day planner already owns
+and protects per-account.
+
+### One-time setup (in the same Supabase project as your day planner)
+
+Run this in the SQL Editor, once:
+
+```sql
+-- Lets the tracker find "its" tasks again without creating duplicates
+alter table tasks add column if not exists source_key text;
+
+-- Turns on live push updates for both apps
+alter publication supabase_realtime add table tasks;
+alter publication supabase_realtime add table categories;
+```
+
+Then in the app: Home → Task Manager Sync → sign in with the **same
+email/password** you use in the day planner → **Enable Live Sync**. It
+pushes all 56 days in as tasks (dated from the program's start date,
+Sep 2, 2026, tagged with a "German" category it creates automatically),
+and from then on, checking things off either app updates the other
+automatically while both are online.
+
+### Honest limitations
+
+- **Not offline-aware in real time** — if you check something off while
+  offline, it saves locally as normal, but the live push to the other
+  app only happens once you're back online (same as the rest of this
+  app's sync).
+- **The realtime security model is intentionally simple**: it filters by
+  your user ID client-side, relying on the same Supabase Auth + RLS
+  policies your `tasks`/`categories` tables already have. This is fine
+  for personal single-user use (which is what this whole project is
+  built for) but isn't a hardened multi-tenant setup.
+- **"Re-push all 56"** is there for whenever the schedule content itself
+  changes (e.g., you edit a day's tasks) — it won't duplicate rows,
+  since it matches by the hidden `source_key`, but it does overwrite
+  the title/checklist text on the planner side for that day.
+
 ## Local-only use (no sync)
 
 The app works fully offline with just browser storage if you never set
