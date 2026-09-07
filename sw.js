@@ -4,7 +4,7 @@
 // logic anyway — offline it'll just fail naturally and the app falls back
 // to local-only storage, same as if sync were never configured.
 
-const CACHE_NAME = 'b2quest-cache-v3';
+const CACHE_NAME = 'b2quest-cache-v4';
 const APP_SHELL = ['./', './index.html', './manifest.json', './config.js', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', (event) => {
